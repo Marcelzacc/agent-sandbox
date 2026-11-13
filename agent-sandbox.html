@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Sandbox</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--muted:#666;--card:#f5f5f4;--line:#ddd;--accent:#3ecf8e;--accent-fg:#06281a;--danger:#c0392b}
+@media (prefers-color-scheme:dark){:root{--bg:#161616;--fg:#eee;--muted:#999;--card:#222;--line:#333;--danger:#ff6b5b}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
+main{max-width:720px;margin:0 auto;padding:24px 16px}
+h1{font-size:1.5rem;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+input{width:100%;padding:10px;margin:6px 0;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+button{padding:9px 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit;cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:600}
+button.danger{color:var(--danger)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.stats{display:flex;gap:10px}
+.stat{flex:1;text-align:center;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.stat b{display:block;font-size:1.5rem}
+.item{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:10px 0;border-top:1px solid var(--line);flex-wrap:wrap}
+.item:first-child{border-top:0}
+.badge{font-size:.75rem;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.badge.production{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+#msg{min-height:1.4em;color:var(--muted);font-size:.9rem}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<main>
+  <h1>Agent Sandbox</h1>
+  <p class="sub">Spin up experiments, promote the good ones, archive the rest.</p>
+  <p id="msg"></p>
+
+  <section id="authView" class="card">
+    <strong>Sign up or log in</strong>
+    <input id="email" type="email" placeholder="Email" autocomplete="email">
+    <input id="password" type="password" placeholder="Password (min 6 characters)" autocomplete="current-password">
+    <div class="row">
+      <button class="primary" id="loginBtn">Log in</button>
+      <button id="signupBtn">Sign up</button>
+    </div>
+  </section>
+
+  <section id="appView" class="hidden">
+    <div class="row" style="justify-content:space-between;margin-bottom:12px">
+      <span id="who" class="sub" style="margin:0"></span>
+      <button id="logoutBtn">Log out</button>
+    </div>
+    <div class="card">
+      <div class="stats">
+        <div class="stat"><b id="cExp">0</b>Experiments</div>
+        <div class="stat"><b id="cProd">0</b>Production</div>
+        <div class="stat"><b id="cArch">0</b>Archived</div>
+      </div>
+    </div>
+    <div class="card">
+      <strong>New experiment</strong>
+      <div class="row" style="margin-top:6px">
+        <input id="expName" placeholder="Experiment name" style="flex:1;margin:0">
+        <button class="primary" id="createBtn">Create</button>
+      </div>
+    </div>
+    <div class="card"><div id="list"></div></div>
+  </section>
+</main>
+
+<script>
+// Project URL and publishable key (publishable keys are safe in browser code)
+const SUPABASE_URL = "https://tzktarwyzpprzjqjvpae.supabase.co";
+const SUPABASE_KEY = "sb_publishable_NnWAgf_WrgMYnMpxCamlxw_4rA6-c8y";
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const $ = id => document.getElementById(id);
+const say = t => { $("msg").textContent = t || ""; };
+
+function esc(s){ const d=document.createElement("div"); d.textContent=s; return d.innerHTML; }
+
+async function showState(session){
+  const on = !!session;
+  $("authView").classList.toggle("hidden", on);
+  $("appView").classList.toggle("hidden", !on);
+  if(on){ $("who").textContent = session.user.email; await load(); }
+}
+
+async function load(){
+  const { data, error } = await sb.from("experiments").select("*").order("created_at",{ascending:false});
+  if(error){ say("Could not load: "+error.message); return; }
+  $("cExp").textContent  = data.filter(x=>x.status==="experiment").length;
+  $("cProd").textContent = data.filter(x=>x.status==="production").length;
+  $("cArch").textContent = data.filter(x=>x.status==="archived").length;
+  $("list").innerHTML = data.length ? data.map(x=>`
+    <div class="item">
+      <div><strong>${esc(x.name)}</strong> <span class="badge ${x.status}">${x.status}</span><br>
+      <small class="sub">last active ${new Date(x.last_active_at).toLocaleString()}</small></div>
+      <div class="row">
+        ${x.status==="experiment" ? `<button data-a="production" data-id="${x.id}">Promote</button>`:""}
+        ${x.status!=="archived" ? `<button class="danger" data-a="archived" data-id="${x.id}">Archive</button>`:""}
+      </div>
+    </div>`).join("") : '<span class="sub">No experiments yet. Create one above.</span>';
+}
+
+$("signupBtn").onclick = async () => {
+  say("Signing up...");
+  const { data, error } = await sb.auth.signUp({ email:$("email").value.trim(), password:$("password").value });
+  if(error) return say(error.message);
+  if(data.session) say("Account created."); else say("Account created. Check your email to confirm, then log in.");
+};
+$("loginBtn").onclick = async () => {
+  say("Logging in...");
+  const { error } = await sb.auth.signInWithPassword({ email:$("email").value.trim(), password:$("password").value });
+  if(error) return say(error.message);
+  say("");
+};
+$("logoutBtn").onclick = () => sb.auth.signOut();
+
+$("createBtn").onclick = async () => {
+  const name = $("expName").value.trim();
+  if(!name) return say("Give the experiment a name.");
+  const { error } = await sb.from("experiments").insert({ name });
+  if(error) return say(error.message);
+  $("expName").value = ""; say(""); load();
+};
+
+$("list").onclick = async e => {
+  const b = e.target.closest("button[data-id]"); if(!b) return;
+  const { error } = await sb.from("experiments")
+    .update({ status:b.dataset.a, last_active_at:new Date().toISOString() }).eq("id", b.dataset.id);
+  if(error) return say(error.message);
+  load();
+};
+
+sb.auth.onAuthStateChange((_e, session) => showState(session));
+sb.auth.getSession().then(({data}) => showState(data.session));
+</script>
+</body>
+</html>
